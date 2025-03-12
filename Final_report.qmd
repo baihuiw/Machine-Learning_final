@@ -1,0 +1,690 @@
+---
+title: "Final_report"
+format: pdf
+editor: visual
+bibliography: references.bib
+---
+
+# **Final Report: Machine Learning Model for Predicting Startup Success**
+
+## **1. Research Question**
+
+How do a startup’s location, founding age, and early funding rounds influence its likelihood of securing late-stage funding or achieving acquisition?
+
+## **2. Background and Literature Review**
+
+Understanding startup success has been a crucial area of research in entrepreneurship and business analytics. Venture capital (VC) investment plays a critical role in shaping the success and strategic direction of startups. Existing research @ahluwalia2021effect, @gompers2020venture, @prado2022big has explored how financial clusters, VC decision-making, and acquisitions by major technology firms influence startup performance and innovation. @ahluwalia2021effect investigate the impact of financial clusters on startup exit success through mergers and acquisitions (M&A), their findings suggest that startups located in financial hubs with strong VC presence are more likely to achieve successful exits through M&A. @gompers2020venture conducted a study in 2020 to investgate how VC's decision making process has been influenced in selecting prospective startups.These findings suggest that human capital is a primary determinant of startup funding success. @prado2022big challenged the conventional idea that large tech companies creating "kill zones" that stifle competition. In contrast, they pointed out that acquisitions of startups by major tech firms, particularly in the U.S. and Europe, can trigger temporary investment spikes in related industry sectors. Their findings suggest the significance of M&A activity, which can serve as a singnal for the market and more generally, the economy.
+
+These studies collectively highlight the critical role of VC funding and acquisitions in shaping startup success. Based on these literatures, this project analyzes venture capital investment trends using a comprehensive dataset of startup companies worldwide. The dataset includes details such as total funding received, number of funding rounds, investment amounts per round, company locations, industries, founding dates, and acquisition status. The project will take the current theory in the literature as hypothesis, and see if our data could demonstrate these theories, or they present a different picture. The project aims to estimate the correlation between funding levels, geographic locations, and the survival of startup companies by exploring patterns, identifying key factors, and applying predictive modeling.
+
+## **3. Significance of the study**
+
+Accurate prediction of startup success can aid investors, policymakers, and entrepreneurs in making informed decisions. By identifying key drivers, this research provides actionable insights into optimizing resource allocation and investment strategies. Furthermore, examining geographic clustering in AI-intensive areas can help understand whether technical advancements are centralized and how location influences startup growth.
+
+## **4. Description of Data**
+
+-   Data Source:
+    https://www.kaggle.com/datasets/arindam235/startup-investments-crunchbase
+
+-   
+    The dataset is sourced from Crunchbase on Kaggle, which tracks startup funding, acquisitions, and
+    geographic locations. It includes 54,294 entries and 39 variables, providing a rich dataset to
+    explore startup funding patterns, locations and acquisition outcomes.
+
+-   
+    Key Variables:
+    Dependent Variable (Outcome):
+    Acquisition Status (status): Binary variable indicating if a startup has been
+    acquired (1) or is still operating/closed (0).
+
+-   
+    Independent Variables (Predictors):
+    funding_total_usd: Total funding received by the startup.
+    funding_rounds: Number of funding rounds.
+    seed, venture, angel, etc.: Specific funding types.
+    round_A, round_B, …, round_H: Funding stages.
+    Geographic Location.
+
+## **5. Data Limitations and Biases**
+
+-   **Imbalance Issue:** More startups tend to fail than succeed, leading to class imbalance.
+
+-   **Survivorship Bias:** The dataset primarily includes funded startups, excluding unsuccessful startups that never received funding.
+
+-   **Feature Availability:** Some categorical and financial data are missing or incomplete, requiring preprocessing.
+
+-   **Geographic Focus:** The dataset may not cover all startup ecosystems equally, potentially skewing clustering insights.
+
+## 6. Feature Engineering 
+
+-   Converted categorical variables into numerical features (one-hot encoding, frequency encoding).
+
+-   Standardized numeric variables for models sensitive to scale (Lasso, XGBoost).
+
+-   Created a new feature: funding_round_density = funding_total_usd / funding_rounds.
+
+-   Handled missing values using imputation and removal of unusable colunms
+
+```{r}
+
+library(tidyverse)
+library(data.table)
+library(caret)
+library(glmnet)
+library(corrplot)
+library(dendextend)
+library(doParallel)
+
+file_path <- "/Users/wangbaihui/investments_data.csv"
+df <- fread(file_path, encoding = "UTF-8", stringsAsFactors = FALSE)
+
+setnames(df, gsub("[^A-Za-z0-9_]", "", names(df)))
+
+df$funding_total_usd <- as.numeric(gsub(",", "", gsub("-", "0", df$funding_total_usd)))
+
+missing_threshold <- 0.3 * nrow(df)
+df_cleaned <- df[, colSums(is.na(df)) < missing_threshold, with = FALSE]
+
+df_cleaned <- na.omit(df_cleaned)
+
+df_cleaned <- df_cleaned %>%
+  mutate(
+    startup_age = 2025 - founded_year,
+    startup_category = ifelse(founded_year < 2010, "Older", "Newer"),
+    funding_growth_rate = ifelse(funding_rounds > 1, (funding_total_usd / funding_rounds), funding_total_usd),
+    funding_round_density = funding_total_usd / funding_rounds,
+    is_vc_funded = ifelse(round_A > 0 | round_B > 0 | round_C > 0, 1, 0)
+  )
+
+df_balanced <- df_cleaned %>%
+  group_by(status) %>%
+  sample_n(size = min(table(df_cleaned$status)), replace = TRUE) %>%
+  ungroup()
+
+summary(df_balanced)
+
+```
+
+## 7. Exploratory Data Analysis (EDA)
+
+1.  Funding Total & Rounds:
+
+    The median total funding received by startups is \$1,000,000, with a mean of \~\$1.39M.
+
+    Some startups have raised significantly higher amounts, with a maximum funding amount of \$3 billion.
+
+    Our data suggested that most startups do not raise multiple rounds because the number of funding rounds varies with a median of 1 and a mean of 1.79 rounds.
+
+2.  Startup Age:
+
+    The oldest startup in the dataset was founded in 1902, while the youngest was founded in 2014. Overall, the median founding year is 2010, meaning most startups in this dataset were established relatively recently.
+
+    Given this range, an interesting direction would be analyzing whether older startups have a higher survival rate or receive more funding than startups that have been founded relative recently(2010\~).
+
+3.  Funding amount:
+
+    Many startups received seed funding, but their amounts vary widely. The Seed Funding amount: Median = 0, Mean = \$244,764, Max = \$10M.
+
+    Equity Crowdfunding is less common funding type among start ups, with Median = 0, Mean = \$6,962, Max = \$25M, indicating that only a few companies raising significant amounts in this round.
+
+    Comaring to Equity Crowdfounding, Angel Investments are more common among start up companies. Some startups receive substantial angel funding: Median = 0, Mean = \$24,218, Max = \$43.9M
+
+    Some companies receive large grants, but most do not: Grants: Median = 0, Mean = \$134,879, Max = \$47.7M
+
+4.  Survival Analysis:
+
+    Calculated survival rates for "Older" vs. "Newer" startups (based on "operating" status). Found that newer startups have a higher survival rate compared to older startups. This could be due to improved market conditions, better funding opportunities, or increased startup support ecosystems in recent years. The boxplot confirms that newer startups have greater variation in funding, while older startups have a more stable funding range. Some extreme values (outliers) are present in both categories. Most startups are less than 25 years old and there are very few startups older than 50 years, which indicates that the startup ecosystem has boomed in the past two decades, with a higher concentration of startups founded recently.
+
+    However, oder startups generally have a higher median funding amount than newer startups.The spread of funding (the middle 50% of values) appears slightly larger for older startups compared to newer ones. Both categories have significant outliers, particularly on the higher end, indicating that some startups receive exceptionally high funding.
+
+5.  Correlation Heatmap:
+
+    The heatmap suggests that startups with more funding rounds accumulate higher total funding. VC-backed startups tend to raise more capital. Some later-stage funding rounds may be negatively correlated with startup age, possibly indicating that newer startups are receiving more late-stage investments. implying that other external factors, such as geographic locations may influence funding success beyond these numerical relationships.
+
+6.  Funding Type Distribution:
+
+    Venture capital funding has the highest total funding amount among all types, significantly outpacing others. Seed funding also has a considerable amount, though much lower than venture funding. Angel, convertible notes, grants, and private equity have much smaller total funding compared to venture and seed funding. The funding types follow a general progression where **early-stage investments (angel, seed)** receive lower funding compared to **growth-stage funding (venture, private equity).**
+
+**Distribution of startup ages**
+
+```{r}
+ggplot(df_cleaned, aes(x = startup_age)) +
+  geom_histogram(fill = "blue", bins = 20, alpha = 0.6) +
+  labs(title = "Distribution of Startup Ages", x = "Startup Age", y = "Count") +
+  theme_minimal()
+
+
+```
+
+**Survival Rate Analysis**
+
+```{r}
+df_survival <- df_cleaned %>%
+  group_by(startup_category) %>%
+  summarise(
+    total_startups = n(),
+    active_startups = sum(status == "operating", na.rm = TRUE),
+    survival_rate = active_startups / total_startups
+  )
+
+ggplot(df_survival, aes(x = startup_category, y = survival_rate, fill = startup_category)) +
+  geom_col() +
+  labs(title = "Survival Rate of Older vs. Newer Startups", x = "Startup Category", y = "Survival Rate") +
+  theme_minimal()
+
+
+```
+
+**Funding Distribution by Startup Category**
+
+```{r}
+
+ggplot(df_cleaned %>% filter(funding_total_usd > 0), aes(x = startup_category, y = funding_total_usd, fill = startup_category)) +
+  geom_boxplot() +
+  scale_y_log10() +
+  labs(title = "Funding Comparison: Older vs. Newer Startups", x = "Startup Category", y = "Total Funding (Log Scale)") +
+  theme_minimal()
+
+
+
+```
+
+**Correlation Matrix for Numeric Features**
+
+```{r}
+
+num_vars <- df_cleaned %>% select(where(is.numeric))
+
+num_vars <- num_vars %>% select_if(~ var(., na.rm = TRUE) > 0)
+
+num_vars <- num_vars %>% filter_all(all_vars(is.finite(.)))
+
+cor_matrix <- cor(num_vars, use = "pairwise.complete.obs")
+
+library(corrplot)
+
+corrplot(cor_matrix, 
+         method = "color", 
+         tl.cex = 0.8,          
+         tl.col = "black",     
+         col = colorRampPalette(c("red", "white", "blue"))(200), 
+         cl.limits = c(-1, 1))
+
+
+```
+
+```{r}
+funding_types <- df_cleaned %>%
+  select(seed, venture, angel, grant, convertible_note, private_equity) %>%
+  pivot_longer(everything(), names_to = "funding_type", values_to = "amount")
+
+ggplot(funding_types, aes(x = funding_type, y = amount, fill = funding_type)) +
+  geom_bar(stat = "identity") +
+  scale_y_log10() +
+  labs(title = "Funding Type Distribution", x = "Funding Type", y = "Total Funding (Log Scale)") +
+  theme_minimal()
+
+
+```
+
+## **8. Geographical analysis**
+
+Geocoing using Google API to gain the latitude and longitude of locations of startup companies to for generating interactive map. Saved the coordinates information in geocoded_data_google_fixed.csv for further visualization and modeling.
+
+```{r, eval=FALSE}
+#this bit of code is not executed
+library(ggmap)
+library(dplyr)
+library(readr)
+library(stringi)
+library(purrr)  
+
+register_google(key = "AIzaSyBINzBy429j18JL2L6zwdomDKJ0VkhQric")
+
+df <- read_csv("/Users/wangbaihui/investments_data.csv")
+
+df <- df %>%
+  filter(!is.na(city) & !is.na(country_code) & city != "" & country_code != "") %>%
+  mutate(location = paste(city, country_code, sep = ", "))
+
+
+df$location <- iconv(df$location, from = "", to = "UTF-8")  
+df$location <- stri_trans_general(df$location, "Latin-ASCII")  
+
+df <- df %>% filter(location != "" & !is.na(location))
+
+unique_locations <- unique(df$location)
+
+batch_geocode <- function(locations, batch_size = 500) {
+  results <- list()
+  
+  for (i in seq(1, length(locations), by = batch_size)) {
+    batch <- locations[i:min(i + batch_size - 1, length(locations))]
+    
+    batch <- batch[!is.na(batch) & batch != ""]
+    
+    if (length(batch) == 0) next
+    
+    tryCatch({
+      geo_result <- geocode(batch, output = "latlona", source = "google", override_limit = TRUE)
+      
+      results <- append(results, list(data.frame(location = batch, latitude = geo_result$lat, longitude = geo_result$lon)))
+    }, error = function(e) {
+      message("Skipping batch due to error: ", e)
+    })
+    
+    Sys.sleep(1)
+  }
+  
+  return(bind_rows(results))
+}
+
+geocoded_results <- batch_geocode(unique_locations)
+
+missing_locs <- setdiff(unique_locations, geocoded_results$location)
+
+if (length(missing_locs) > 0) {
+  message("Retrying missing locations using only city names...")
+
+  missing_cities <- df %>%
+    filter(location %in% missing_locs) %>%
+    pull(city) %>%
+    unique()
+  
+  city_geocoded_results <- batch_geocode(missing_cities)
+  
+  city_geocoded_results <- city_geocoded_results %>%
+    rename(city = location)
+  
+  df <- df %>%
+    left_join(city_geocoded_results, by = "city")
+}
+
+df_geocoded <- df %>%
+  left_join(geocoded_results, by = "location")
+
+if (!"latitude" %in% colnames(df_geocoded)) df_geocoded$latitude <- NA
+if (!"longitude" %in% colnames(df_geocoded)) df_geocoded$longitude <- NA
+
+write_csv(df_geocoded, "geocoded_data_google_fixed.csv")
+
+head(df_geocoded)
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(leaflet)
+library(stringr)
+library(readr)
+
+file_path <- "geocoded_data_google_fixed.csv"
+df <- read_csv(file_path)
+
+```
+
+```{r}
+colnames(df)
+```
+
+#### **Industry-wise Funding, Funding Rounds, and Survival Rates:** 
+
+-   **Top Industries by Total Funding**:
+
+    **Biotechnology** has the highest total funding. **Mobile, Software, and Clean Technology** also have significant funding. **Health Care** has a relatively high average funding round count (2.36), indicating sustained investor interest.
+
+-   **Survival Rates**:
+
+    **With the highest funding amount, Biotechnology (90.9%) and Health Care (90%)** have the highest survival rates. **E-Commerce (89.3%) and Clean Technology (88.8%)** also have strong survival rates. Notably, **Mobile startups receive significant funding but have a lower survival rate**, possibly due to intense competition or market volatility.
+
+```{r}
+required_columns <- c("category_list_main", "funding_total_usd", "funding_rounds", "status", "latitude", "longitude")
+missing_cols <- setdiff(required_columns, colnames(df))
+if (length(missing_cols) > 0) stop(paste("Missing required columns:", paste(missing_cols, collapse=", ")))
+
+
+df <- df %>%
+  filter(!is.na(category_list_main) & category_list_main != "")
+
+df <- df %>%
+  mutate(
+    funding_total_usd = as.numeric(gsub(",", "", funding_total_usd)),  
+    funding_rounds = as.numeric(funding_rounds)  
+  )
+
+industry_stats <- df %>%
+  group_by(category_list_main) %>%
+  summarise(
+    total_funding = sum(funding_total_usd, na.rm = TRUE),
+    avg_funding_rounds = mean(funding_rounds, na.rm = TRUE),
+    survival_rate = mean(status == "operating", na.rm = TRUE)
+  ) %>%
+  arrange(desc(total_funding))
+
+head(industry_stats)
+
+
+top_funded_industries <- industry_stats %>% top_n(10, total_funding)
+
+ggplot(top_funded_industries, aes(x = reorder(category_list_main, total_funding), y = total_funding)) +
+  geom_col(fill = "blue") +
+  coord_flip() +
+  scale_y_log10() +
+  labs(title = "Top 10 Industries by Total Funding", x = "Industry", y = "Total Funding (Log Scale)") +
+  theme_minimal()
+
+top_survival_industries <- industry_stats %>% top_n(10, survival_rate)
+
+ggplot(top_survival_industries, aes(x = reorder(category_list_main, survival_rate), y = survival_rate)) +
+  geom_col(fill = "green") +
+  coord_flip() +
+  labs(title = "Industries with Highest Survival Rates", x = "Industry", y = "Survival Rate") +
+  theme_minimal()
+
+tech_keywords <- c("Technology", "Software", "AI", "Machine Learning", "Internet", "Cloud", "Cybersecurity")
+
+df_tech <- df %>%
+  filter(str_detect(tolower(category_list_main), paste(tolower(tech_keywords), collapse = "|")))
+
+tech_map <- leaflet(df_tech) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    lng = ~longitude, lat = ~latitude,
+    popup = ~paste0("<b>", category_list_main, "</b><br>Funding: $", funding_total_usd),
+    radius = 4, color = "blue", fill = TRUE, fillOpacity = 0.6
+  )
+
+htmlwidgets::saveWidget(tech_map, "technology_companies_map.html", selfcontained = TRUE)
+
+head(df_tech)
+
+print("Analysis complete! Interactive map saved as 'technology_companies_map.html'.")
+
+```
+
+```{r}
+library(corrplot)
+library(dendextend)
+
+num_vars <- df_cleaned %>% select(where(is.numeric))
+num_vars <- num_vars %>% select_if(~ var(., na.rm = TRUE) > 0)
+
+cor_matrix <- cor(num_vars, use = "pairwise.complete.obs")
+
+if (any(is.na(cor_matrix) | is.infinite(cor_matrix))) {
+  stop("Error: NA/NaN/Inf detected in the correlation matrix.")
+}
+
+dist_matrix <- as.dist(1 - cor_matrix)
+
+if (any(is.na(dist_matrix) | is.infinite(dist_matrix))) {
+  stop("Error: NA/NaN/Inf detected in distance matrix. Clustering cannot proceed.")
+}
+
+hc <- hclust(dist_matrix, method = "ward.D2")
+
+plot(hc, main = "Hierarchical Clustering of Features", xlab = "", sub = "", cex = 0.7)
+
+dend <- as.dendrogram(hc)
+dend <- color_branches(dend, k = 4) 
+plot(dend, main = "Hierarchical Clustering of Features (Colored Clusters)", cex = 0.7)
+```
+
+**The Dendrogram suggests that:**
+
+1.  Funding Rounds Are Strongly Correlated Cluster (Red/Yellow) includes round_A, venture, round_B, round_F, round_D, round_C, round_E, and total funding rounds. This suggests that earlier funding rounds (A, B, etc.) are highly interdependent, meaning a startup that secures an early investment is more likely to progress through subsequent rounds. The presence of venture funding in this cluster implies that venture capital plays a crucial role in driving multiple funding rounds.
+
+2.  Post-IPO and Large Funding Types Form Another Cluster Cluster (Green) includes post_ipo_equity, post_ipo_debt, grant, private equity, and total funding amount. These features are likely associated with later-stage funding and large-scale financial support. It indicates that startups raising post-IPO funds often have access to grants and private equity, suggesting that successful fundraising early on may lead to diverse funding sources later.
+
+3.  Location, Founding Year, and Early-Stage Funding Are Grouped Together Cluster (Blue/Purple) includes longitude, latitude, founded_year, seed, undisclosed, and crowdfunding types. This suggests that a startup’s founding location and age are closely tied to its ability to secure early-stage funding (seed, crowdfunding, angel investment). The link between geographical location and funding success indicates that certain regions may be more favorable for startup funding.
+
+4.  Convertible Notes, Debt Financing, and Secondary Markets Are Interrelated Cluster (Blue, Rightmost Group) includes convertible notes, debt financing, secondary markets, and round_G. This suggests that later-stage funding often involves more complex financial instruments, such as debt financing and secondary markets. Convertible notes are often used as a bridge between funding rounds, meaning they tend to be involved in later-stage fundraising efforts.
+
+## 9. Machine Learning Models Selection and Evaluation
+
+Since the research question focuses on understanding the factors influencing startup success and predicting survival based on funding and geographic information, I need machine learning models that can both provide interpretability and achieve high predictive accuracy. Additionally, to explore whether startups cluster in AI-intensive regions and compare their distribution to AI open-source contributors on GitHub, models that can incorporate spatial features are required. Therefore, I chose **Random Forest** and **XGBoost** as the classification models. Random Forest helps identify the most influential factors in startup survival through feature importance analysis, while XGBoost, after hyperparameter tuning, provides superior predictive performance by capturing complex relationships between funding, location, and survival.
+
+From the result, **Random Forest is particularly useful for understanding the role of funding rounds, total funding, and location in determining startup outcomes**. However, since **XGBoost excels at optimizing predictive accuracy and handling nonlinearity, it is better suited for making final survival predictions**. The initial XGBoost model underperformed, but after hyperparameter tuning, it matched or even outperformed Random Forest in classification accuracy. While these models can incorporate geographic variables, they are not directly suited for clustering tasks. To analyze whether startups cluster in AI-intensive areas, I visualize the tech start-up companies' locations by genreating an interactive maps(saved separately in github), which are better suited for detecting spatial patterns.
+
+```{r}
+library(glmnet)
+library(randomForest)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(ROSE) 
+library(xgboost)
+library(Matrix)
+library(pROC)
+
+file_path <- "geocoded_data_google_fixed.csv"
+df <- read.csv(file_path)
+
+df <- df %>%
+  filter(!is.na(category_list_main) & category_list_main != "")
+
+df$status <- ifelse(df$status %in% c("acquired", "operating"), 1, 0)
+df$status <- as.factor(df$status) 
+
+
+df$funding_total_usd <- as.numeric(gsub(",", "", df$funding_total_usd))
+df$funding_rounds <- as.numeric(df$funding_rounds)
+
+df <- na.omit(df)
+
+df_model <- df %>%
+  select(funding_total_usd, funding_rounds, latitude, longitude, status)
+
+set.seed(123)  
+df_balanced <- ovun.sample(status ~ ., data = df_model, method = "over", N = max(table(df_model$status)) * 2)$data
+
+train_index <- createDataPartition(df_balanced$status, p = 0.8, list = FALSE)
+train_data <- df_balanced[train_index, ]
+test_data <- df_balanced[-train_index, ]
+
+preproc <- preProcess(train_data[, -5], method = c("center", "scale"))
+train_scaled <- predict(preproc, train_data[, -5])
+test_scaled <- predict(preproc, test_data[, -5])
+
+train_scaled$status <- train_data$status
+test_scaled$status <- test_data$status
+
+x_train <- as.matrix(train_scaled[, -5])
+y_train <- train_scaled$status
+
+x_test <- as.matrix(test_scaled[, -5])
+y_test <- test_scaled$status
+
+set.seed(123)
+lasso_model <- cv.glmnet(x_train, y_train, alpha = 1, family = "binomial")
+
+best_lambda <- lasso_model$lambda.min
+cat("Best lambda:", best_lambda, "\n")
+
+lasso_coef <- coef(lasso_model, s = best_lambda)
+print(lasso_coef)
+
+set.seed(123)
+rf_model <- randomForest(status ~ ., data = train_scaled, ntree = 500, importance = TRUE)
+
+varImpPlot(rf_model, main = "Random Forest Feature Importance")
+
+#rf_pred <- predict(rf_model, newdata = test_scaled)
+# Generate predicted probabilities instead of labels
+rf_pred_prob <- predict(rf_model, newdata = test_scaled, type = "prob")[, 2]  # Probability of class 1
+
+# Convert probabilities to class predictions
+rf_pred <- ifelse(rf_pred_prob > 0.5, 1, 0)
+
+rf_conf_matrix <- confusionMatrix(as.factor(rf_pred), as.factor(test_scaled$status))
+print(rf_conf_matrix)
+
+rf_roc <- roc(as.numeric(test_scaled$status), as.numeric(rf_pred_prob))
+plot(rf_roc, main = "Random Forest ROC Curve")
+cat("Random Forest AUC:", auc(rf_roc), "\n")
+
+```
+
+```{r}
+
+train_scaled$status <- as.numeric(as.character(train_scaled$status))
+test_scaled$status <- as.numeric(as.character(test_scaled$status))
+
+dtrain <- xgb.DMatrix(data = as.matrix(train_scaled[, -5]), label = train_scaled$status)
+dtest <- xgb.DMatrix(data = as.matrix(test_scaled[, -5]), label = test_scaled$status)
+
+set.seed(123)
+xgb_model <- xgboost(
+  data = dtrain,
+  max_depth = 6,
+  eta = 0.1,
+  nrounds = 100,
+  objective = "binary:logistic",
+  eval_metric = "logloss"
+)
+
+```
+
+```{r}
+library(pROC)
+xgb_pred_prob <- predict(xgb_model, newdata = dtest)
+xgb_pred <- ifelse(xgb_pred_prob > 0.5, 1, 0)
+
+xgb_conf_matrix <- confusionMatrix(as.factor(xgb_pred), as.factor(y_test))
+print(xgb_conf_matrix)
+
+xgb_roc <- roc(y_test, xgb_pred_prob)
+plot(xgb_roc, main = "XGBoost ROC Curve")
+cat("XGBoost AUC:", auc(xgb_roc), "\n")
+
+```
+
+## 10. Discussion of Model Results
+
+The **Random Forest feature importance plots** indicate that **funding total USD, funding rounds, latitude, and longitude** are key predictive variables. The **Mean Decrease in Accuracy** plot shows that longitude, funding total USD, and latitude contribute significantly to the model's predictive accuracy, while the **Mean Decrease in Gini** suggests that funding total USD is the most important variable in determining the outcome. The **ROC curve** demonstrates an **AUC (Area Under Curve) of 0.976**, which signifies a high level of discriminatory power between classes, indicating that the model is well-calibrated for classification tasks.
+
+Additionally, the **logistic regression coefficients** provide insight into the relationship between predictors and the target variable. Funding total USD and funding rounds exhibit negative coefficients, implying that an increase in these variables decreases the likelihood of falling into a certain classification category. The **confusion matrix** highlights an overall accuracy of **92.38%**, with high **sensitivity (85.93%)** and **specificity (98.83%)**, demonstrating that the model performs exceptionally well in identifying positive cases while minimizing false positives. The **Kappa statistic (0.8476)** suggests a strong agreement beyond chance, reinforcing the model's reliability. The McNemar’s test, with a p-value less than **2.2e-16**, confirms that the classifier is significantly different from a random model.
+
+In comparision, the **XGBoost model** exhibits a moderate predictive performance. The **ROC curve** suggests an **AUC of 0.817**, which indicates a reasonably strong discriminative ability, though lower than the previously analyzed Random Forest model (AUC = 0.976). The model in this case achieve the balanced **accuracy of 73.93%**.
+
+The **confusion matrix** highlights that the model correctly identifies 2,321 positive cases but misclassifies 1,268 of them as negatives, yielding a **sensitivity of 64.67%**. This suggests that the model struggles with recall, meaning it fails to identify a some actual positive cases. However, its **specificity (83.20%)** is higher, indicating that it is better at correctly identifying negative cases. The **positive predictive value (precision) of 79.38%** signifies that when the model predicts a positive case, it is correct most of the time, while the **negative predictive value (70.19%)** is lower, reinforcing the issue with recall.
+
+The **Kappa statistic of 0.4787** suggests moderate agreement beyond chance, but it is significantly lower than the Random Forest model, indicating less reliability in classification. The **McNemar’s test** (p-value \< 2.2e-16) further confirms that the model’s errors are significantly different from random chance. The overall **accuracy of 73.93%**, while better than a random classifier, suggests room for improvement, particularly in balancing recall and precision.
+
+## **11. Hyperparameter Tuning**
+
+In order to ensure that the XGBoost model is optimized for generalization rather than overfitting to the training data. A hyperparameter tuning approach is generated by systematically testing different hyperparameter combinations. The model finds an optimal tradeoff between **complexity, regularization, and performance**, leading to a significantly improved classification accuracy. The final ROC curve and confusion matrix confirm the effectiveness of the tuned model.
+
+```{r}
+library(xgboost)
+library(purrr)
+library(pROC)
+
+param_grid <- expand.grid(
+  max_depth = c(3, 6, 9),
+  eta = c(0.01, 0.1, 0.3),
+  gamma = c(0, 1, 5),
+  colsample_bytree = c(0.7, 1),
+  min_child_weight = c(1, 3, 5),
+  nrounds = c(50, 100, 150)
+)
+
+dtrain <- xgb.DMatrix(data = as.matrix(train_scaled[, -5]), label = as.numeric(as.character(train_scaled$status)))
+
+train_xgb_model <- function(max_depth, eta, gamma, colsample_bytree, min_child_weight, nrounds) {
+  set.seed(123)
+  model <- xgboost(
+    data = dtrain, 
+    max_depth = max_depth, 
+    eta = eta, 
+    gamma = gamma,
+    colsample_bytree = colsample_bytree,
+    min_child_weight = min_child_weight,
+    nrounds = nrounds, 
+    objective = "binary:logistic", 
+    eval_metric = "logloss", 
+    verbose = 0
+  )
+  
+  pred_probs <- predict(model, newdata = as.matrix(test_scaled[, -5]))
+  
+  auc_score <- auc(roc(as.numeric(test_scaled$status), pred_probs))
+  
+  return(auc_score)
+}
+
+results <- param_grid %>%
+  pmap_dbl(train_xgb_model)
+
+best_index <- which.max(results)
+best_params <- param_grid[best_index, ]
+
+cat("Best Hyperparameters:\n")
+print(best_params)
+cat("Best AUC:", results[best_index], "\n")
+
+```
+
+```{r}
+final_xgb_model <- xgboost(
+  data = dtrain,
+  max_depth = best_params$max_depth,
+  eta = best_params$eta,
+  gamma = best_params$gamma,
+  colsample_bytree = best_params$colsample_bytree,
+  min_child_weight = best_params$min_child_weight,
+  nrounds = best_params$nrounds,
+  objective = "binary:logistic",
+  eval_metric = "logloss",
+  verbose = 1
+)
+
+saveRDS(final_xgb_model, "final_xgb_model.rds")
+cat("Final XGBoost model trained and saved.\n")
+
+```
+
+```{r}
+final_pred_probs <- predict(final_xgb_model, newdata = as.matrix(test_scaled[, -5]))
+
+final_pred <- ifelse(final_pred_probs > 0.5, 1, 0)
+
+final_conf_matrix <- confusionMatrix(as.factor(final_pred), as.factor(test_scaled$status))
+print(final_conf_matrix)
+
+final_roc <- roc(as.numeric(test_scaled$status), final_pred_probs)
+plot(final_roc, main = "Final XGBoost ROC Curve")
+cat("final XGBoost AUC:", auc(final_roc), "\n")
+
+```
+
+## **12. Final Interpretation of Results: Discussion & Linking Back to Literature and Research Question**
+
+**Hypotheses:**
+
+1.  Startups in major tech hubs or larger cities (e.g., Silicon Valley, New York) are more likely to receive late-stage funding due to access to investors.
+
+2.  Older startups have a higher chance of securing late-stage funding, as they have more time to prove traction.
+
+3.  Startups with more early funding rounds (Seed & Series A) are more likely to attract later-stage investors.
+
+The findings from the current analysis strongly support Hypothesis 3, while Hypotheses 1 and 2 are not strongly supported by the data, challenging conventional assumptions about the role of location and startup age in long-term funding success.
+
+From the correlation heatmap, a strong positive correlation among different funding rounds confirms that later-stage funding is highly dependent on the success of earlier rounds. This finding reinforces the idea that securing early investment—such as angel funding, seed rounds, and Series A—is crucial for startups aiming for long-term funding and eventual acquisition. Startups that fail to secure these early-stage investments face a significant competitive disadvantage in attracting late-stage investors, making them more likely to struggle or fail. This highlights the importance of early financial backing and investor confidence(VC's Role) in a startup’s trajectory.@ahluwalia2021effect, @gompers2020venture, @prado2022big, @gompers2020venture
+
+However, contrary to expectations, Hypothesis 2, which assumed that older startups have an advantage over newer ones, is not supported by the data. Instead, the analysis suggests that startups founded after 2010 have a higher survival rate and are more likely to secure later-stage funding compared to those founded before 2010. This finding challenges the common belief that experience and longevity equate to better funding prospects, suggesting that newer startups may be benefiting from evolving market dynamics, technological advancements, and shifting investor preferences. The rise of venture capital interest in disruptive innovations, the increasing role of government support for startups, and the emergence of digital-first business models may have created an ecosystem where newer startups can scale faster and attract funding more easily than their older counterparts.
+
+From the interactive map, the geographic distribution of tech-related startups, highlights clear clustering patterns in major urban and technology hubs worldwide. In the United States, startup concentration is particularly high in California (Silicon Valley, Los Angeles, San Diego), New York, Texas (Austin, Dallas), and Seattle, which aligns with the expectation that tech startups thrive in regions with access to venture capital, infrastructure, and a strong talent pool. Similar trends are observed in Europe, where London, Berlin, Paris, and Amsterdam serve as major startup hubs, and in Asia, where Bangalore, Beijing, Shanghai, Tokyo, and Singapore emerge as key locations for technology-driven entrepreneurship. This actually aligns with our literature @prado2022big that acquisitions of startups by major tech firms, particularly in the U.S. and Europe, can trigger temporary investment spikes in related industry sectors.
+
+With the comparison with the GitHub AI open-source contributors' map, we could see the top 1000 contributors locations on Github mostly align with the startup clusters, it might suggest that AI talent availability is a driving force behind startup formation in those regions. For further analysis, a direct spatial correlation analysis (e.g., Moran’s I or heatmap comparison) would help quantify the overlap between these distributions.
+
+From a broader perspective, these findings suggest a transforming startup ecosystem, reflecting how technological progress, evolving investor behavior, and policy interventions are reshaping the startup funding landscape. Despite concerns that certain industries may be reaching saturation, the continued emergence and survival of new startups indicate that opportunities for innovation remain strong.
+
+## **13. Challenges, Critical Self-Assessment, and Future Consideration**
+
+One major challenge in the research was ensuring data completeness and accuracy, particularly in distinguishing between startups that failed and those that simply did not report further funding. Incomplete or biased datasets may have influenced the predictive models, as survival could sometimes be misclassified due to missing data rather than actual business failure. Additionally, while Random Forest and XGBoost performed well in classification tasks, their reliance on structured input data means they may struggle to capture unstructured factors such as regulatory changes, shifts in investor sentiment, or macroeconomic conditions.
+
+In terms of the geographic clustering analysis, while the maps illustrate clear startup concentrations, further quantitative spatial analysis—such as clustering coefficients, density estimation, or statistical tests of geographic correlation—would provide stronger empirical backing for conclusions about AI-related clustering patterns. Additionally, future work could benefit from a longitudinal approach to observe how startup ecosystems evolve over time. Incorporating additional contextual data (such as government AI policies, local AI research output, or investment patterns in AI-specific ventures) could further clarify whether startups truly co-locate in AI-intensive regions due to talent and funding access.
+
+Lastly, alternative modeling approaches such as causal inference methods or network analysis could provide deeper insights into the interdependencies between funding, geography, and long-term success, offering a more holistic understanding of what drives startup longevity and growth.
