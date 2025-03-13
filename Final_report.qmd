@@ -1,11 +1,9 @@
 ---
-title: "Final_report"
+title: "Final Report: Machine Learning Model for Predicting Startup Success"
 format: pdf
 editor: visual
 bibliography: references.bib
 ---
-
-# **Final Report: Machine Learning Model for Predicting Startup Success**
 
 ## **1. Research Question**
 
@@ -669,7 +667,7 @@ cat("final XGBoost AUC:", auc(final_roc), "\n")
 
 3.  Startups with more early funding rounds (Seed & Series A) are more likely to attract later-stage investors.
 
-The findings from the current analysis strongly support Hypothesis 3, while Hypotheses 1 and 2 are not strongly supported by the data, challenging conventional assumptions about the role of location and startup age in long-term funding success.
+The findings from the current analysis support Hypothesis 3 and 2, while Hypotheses 1 is not strongly supported by the data, challenging conventional assumptions about the role of startup age and operating experience in long-term funding success.
 
 From the correlation heatmap, a strong positive correlation among different funding rounds confirms that later-stage funding is highly dependent on the success of earlier rounds. This finding reinforces the idea that securing early investment—such as angel funding, seed rounds, and Series A—is crucial for startups aiming for long-term funding and eventual acquisition. Startups that fail to secure these early-stage investments face a significant competitive disadvantage in attracting late-stage investors, making them more likely to struggle or fail. This highlights the importance of early financial backing and investor confidence(VC's Role) in a startup’s trajectory.@ahluwalia2021effect, @gompers2020venture, @prado2022big, @gompers2020venture
 
@@ -688,3 +686,7 @@ One major challenge in the research was ensuring data completeness and accuracy,
 In terms of the geographic clustering analysis, while the maps illustrate clear startup concentrations, further quantitative spatial analysis—such as clustering coefficients, density estimation, or statistical tests of geographic correlation—would provide stronger empirical backing for conclusions about AI-related clustering patterns. Additionally, future work could benefit from a longitudinal approach to observe how startup ecosystems evolve over time. Incorporating additional contextual data (such as government AI policies, local AI research output, or investment patterns in AI-specific ventures) could further clarify whether startups truly co-locate in AI-intensive regions due to talent and funding access.
 
 Lastly, alternative modeling approaches such as causal inference methods or network analysis could provide deeper insights into the interdependencies between funding, geography, and long-term success, offering a more holistic understanding of what drives startup longevity and growth.
+
+**Github link:**
+
+https://github.com/baihuiw/Machine-Learning_final/tree/main
